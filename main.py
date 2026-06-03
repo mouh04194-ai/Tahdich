@@ -413,7 +413,7 @@ def process_add_block(message, chat_id, original_msg_id):
         bot.send_message(chat_id, "Invalid user ID.")
     send_admin_panel(chat_id, message.from_user.id, original_msg_id)
 
-# ================= معالجات الأزرار الشاملة =================
+# ================= معالجات الأزرار الشاملة (تم إصلاح admin_panel) =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
 def admin_callback(call: CallbackQuery):
     user_id = call.from_user.id
@@ -434,6 +434,9 @@ def admin_callback(call: CallbackQuery):
         bot.answer_callback_query(call.id, f"Send new value for {key}:", show_alert=False)
         msg = bot.send_message(call.message.chat.id, f"✏️ Send new <b>{key}</b> (integer):", parse_mode="HTML")
         bot.register_next_step_handler(msg, process_admin_setting, key, call.message.chat.id, call.message.message_id)
+    elif action == "panel":  # ✅ تمت إضافة هذا الشرط لمعالجة زر Admin Panel
+        send_admin_panel(call.message.chat.id, user_id, call.message.message_id)
+        bot.answer_callback_query(call.id)
     elif action == "blocked":
         blocked_list(call)
     elif action == "admins":
@@ -505,13 +508,11 @@ def menu_callback(call: CallbackQuery):
         send_my_stats(chat_id, user_id, call.message.message_id)
         bot.answer_callback_query(call.id)
 
-@bot.callback_query_handler(func=lambda call: call.data == "admin_panel")
-def admin_panel_callback(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "🚫 Not admin.", show_alert=True)
-        return
-    send_admin_panel(call.message.chat.id, call.from_user.id, call.message.message_id)
-    bot.answer_callback_query(call.id)
+# ================= معالج منفصل لـ admin_panel لم يعد ضرورياً (تم دمجه في admin_callback) =================
+# (تم التعليق عليه أو إزالته لمنع التداخل)
+# @bot.callback_query_handler(func=lambda call: call.data == "admin_panel")
+# def admin_panel_callback(call: CallbackQuery):
+#     ...
 
 @bot.callback_query_handler(func=lambda call: call.data == "main_menu")
 def back_to_main(call: CallbackQuery):
@@ -532,7 +533,6 @@ def copy_invite_link(call: CallbackQuery):
 def process_cc_input(message, user_id):
     if message.from_user.id != user_id:
         return
-    # تحويل الرسالة إلى أمر /chk
     message.text = f"/chk {message.text.strip()}"
     check_card(message)
 
