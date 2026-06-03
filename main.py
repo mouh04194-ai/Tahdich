@@ -24,24 +24,21 @@ try:
 except Exception as e:
     print("LOG FAIL:", e)
 
-# ================= FORCE SUBSCRIPTION CHANNELS (تعديل حسب قناتيك) =================
-FORCE_CHANNEL_1 = -1001234567890      # ضع معرف القناة الأولى (رقم سالب)
+# ================= FORCE SUBSCRIPTION CHANNELS (عدل هنا) =================
+# ✅ الطريقة الصحيحة: استخدم معرف القناة الرقمي (يبدأ بـ -100) أو @username
+FORCE_CHANNEL_1 = "@mouhammed_ma"  # مثال لقناة عامة
 FORCE_CHANNEL_1_LINK = "https://t.me/mouhammed_ma"
 
-FORCE_CHANNEL_2 = -1002514428576      # ضع معرف القناة الثانية
+FORCE_CHANNEL_2 = "@Illegal_tools"  # مثال لقناة عامة ثانية
 FORCE_CHANNEL_2_LINK = "https://t.me/Illegal_tools"
 
+# ✅ نص الاشتراك الجديد (بدون <blockquote> لتجنب مشاكل العرض)
 FORCE_SUB_MSG = (
     "📢 <b>𝗦𝘂𝗯𝘀𝗰𝗿𝗶𝗽𝘁𝗶𝗼𝗻 𝗥𝗲𝗾𝘂𝗶𝗿𝗲𝗱</b>\n\n"
-    
-    "<blockquote>"
     "🚫 يجب الاشتراك في القنوات التالية لاستخدام البوت\n\n"
-    
     "➊ <a href='{link1}'>القناة الأولى</a>\n"
     "➋ <a href='{link2}'>القناة الثانية</a>\n\n"
-    
     "✅ بعد إكمال الاشتراك اضغط على زر التحقق"
-    "</blockquote>"
 )
 
 # ================= DB =================
@@ -81,16 +78,31 @@ def spend_credit_or_block(message, cost=1):
     save_db(db)
     return db[uid]["credits"]
 
-# ================= FORCE SUBSCRIPTION FUNCTIONS =================
+# ================= FORCE SUBSCRIPTION FUNCTIONS (تم التصحيح) =================
 def is_subscribed(user_id):
-    """التحقق من اشتراك المستخدم في القناتين"""
-    try:
-        status1 = bot.get_chat_member(FORCE_CHANNEL_1, user_id).status
-        status2 = bot.get_chat_member(FORCE_CHANNEL_2, user_id).status
-        return (status1 in ["member", "administrator", "creator"] and
-                status2 in ["member", "administrator", "creator"])
-    except:
-        return False
+    """التحقق من اشتراك المستخدم في القناتين - يعمل مع المعرفات الرقمية و @username"""
+    def check_channel(channel):
+        try:
+            # محاولة التحقق من العضوية
+            member = bot.get_chat_member(channel, user_id)
+            return member.status in ["member", "administrator", "creator"]
+        except Exception as e:
+            # إذا فشل التحقق، غالباً لأن البوت ليس أدمن في القناة
+            print(f"⚠️ فشل التحقق من القناة {channel}: {e}")
+            # نعيد False ونعرض خطأ للمستخدم لاحقاً
+            return False
+
+    # التحقق من القناتين
+    sub1 = check_channel(FORCE_CHANNEL_1)
+    sub2 = check_channel(FORCE_CHANNEL_2)
+    
+    # رسائل تصحيح الأخطاء (اختيارية)
+    if not sub1:
+        print(f"User {user_id} not subscribed to channel 1")
+    if not sub2:
+        print(f"User {user_id} not subscribed to channel 2")
+        
+    return sub1 and sub2
 
 def send_force_sub_message(chat_id, user_id):
     """إرسال رسالة الاشتراك الإجباري مع أزرار القنوات"""
@@ -102,10 +114,10 @@ def send_force_sub_message(chat_id, user_id):
     keyboard.add(check_btn)
 
     text = FORCE_SUB_MSG.format(link1=FORCE_CHANNEL_1_LINK, link2=FORCE_CHANNEL_2_LINK)
-    bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="Markdown", disable_web_page_preview=True)
+    bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
 
 def subscription_required(func):
-    """ديكوراتر للتحقق من الاشتراك قبل تنفيذ الأمر"""
+    """ديكوراتور للتحقق من الاشتراك قبل تنفيذ الأمر"""
     def wrapper(message):
         user_id = message.from_user.id
         if not is_subscribed(user_id):
@@ -127,20 +139,22 @@ def check_sub_callback(call: CallbackQuery):
             "✅ **تم التحقق! أنت مشترك في القناتين. يمكنك استخدام البوت الآن.**",
             call.message.chat.id,
             call.message.message_id,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
-        # إرسال قائمة الأزرار الرئيسية بعد التحقق
         send_main_menu(call.message.chat.id, user_id)
     else:
         bot.answer_callback_query(call.id, "❌ لم يتم الاشتراك بعد، تأكد من الاشتراك في القناتين ثم اضغط تحقق.", show_alert=True)
-        # إعادة إرسال رسالة الاشتراك (أو تحديثها)
         send_force_sub_message(call.message.chat.id, user_id)
 
 # ================= القائمة الرئيسية (أزرار) =================
 def send_main_menu(chat_id, user_id):
     db = ensure_user(user_id)
     credits = db[str(user_id)]["credits"]
-    username = bot.get_chat(user_id).username or "NoUsername"
+    try:
+        user = bot.get_chat(user_id)
+        username = user.username or "NoUsername"
+    except:
+        username = "NoUsername"
 
     keyboard = InlineKeyboardMarkup(row_width=2)
     btn_chk = InlineKeyboardButton("💳 CHECK CARD (/chk)", callback_data="cmd_chk")
@@ -162,7 +176,6 @@ def menu_callback(call: CallbackQuery):
     user_id = call.from_user.id
     chat_id = call.message.chat.id
 
-    # التحقق من الاشتراك مرة أخرى (احتياطي)
     if not is_subscribed(user_id):
         bot.answer_callback_query(call.id, "❌ يرجى الاشتراك في القناتين أولاً", show_alert=True)
         send_force_sub_message(chat_id, user_id)
@@ -171,14 +184,10 @@ def menu_callback(call: CallbackQuery):
     cmd = call.data.split("_")[1]  # chk, request, info
 
     if cmd == "chk":
-        # نحاكي إرسال أمر /chk مع طلب من المستخدم إدخال البطاقة
-        bot.send_message(chat_id, "📝 أرسل البطاقة بهذا التنسيق:\n`cc|mm|yy|cvv`\nمثال: `4242424242424242|12|26|123`", parse_mode="Markdown")
-        # نحتاج لتخزين مؤقت أن المستخدم في وضع إدخال البطاقة، لكن الأسهل: جعل المستخدم يرسل /chk يدوياً أو نستخدم next_step_handler.
-        # سنستخدم next_step_handler بسيط:
-        bot.register_next_step_handler_by_chat_id(chat_id, process_cc_input, user_id)
+        msg = bot.send_message(chat_id, "📝 أرسل البطاقة بهذا التنسيق:\n<code>cc|mm|yy|cvv</code>\nمثال: <code>4242424242424242|12|26|123</code>", parse_mode="HTML")
+        bot.register_next_step_handler(msg, process_cc_input, user_id)
         bot.answer_callback_query(call.id)
     elif cmd == "request":
-        # تنفيذ أمر الطلب
         request_credits_logic(chat_id, user_id)
         bot.answer_callback_query(call.id)
     elif cmd == "info":
@@ -186,16 +195,16 @@ def menu_callback(call: CallbackQuery):
         bot.answer_callback_query(call.id)
 
 def process_cc_input(message, user_id):
-    """معالجة البطاقة التي أرسلها المستخدم بعد ضغط زر /chk"""
     if message.from_user.id != user_id:
         return
-    # إعادة توجيه إلى منطق check_card الموجود
-    # نعدل message مؤقتاً ليحتوي على نص "/chk <cc>"
     message.text = f"/chk {message.text.strip()}"
     check_card(message)
 
 def request_credits_logic(chat_id, user_id):
-    username = bot.get_chat(user_id).username or "NoUsername"
+    try:
+        username = bot.get_chat(user_id).username or "NoUsername"
+    except:
+        username = "NoUsername"
     bot.send_message(chat_id, "✅ Request sent to admin.")
     for admin_id in ADMIN_IDS:
         bot.send_message(
@@ -209,14 +218,17 @@ def request_credits_logic(chat_id, user_id):
 def show_info(chat_id, user_id):
     db = ensure_user(user_id)
     credits = db[str(user_id)]["credits"]
-    username = bot.get_chat(user_id).username or "NoUsername"
+    try:
+        username = bot.get_chat(user_id).username or "NoUsername"
+    except:
+        username = "NoUsername"
     bot.send_message(
         chat_id,
         f"👤 @{username}\nRemaining Credits: {credits}",
         parse_mode="HTML"
     )
 
-# ================= الأوامر الأصلية (مزودة بالديكورات مع تحقق الاشتراك) =================
+# ================= الأوامر الأصلية =================
 @bot.message_handler(commands=["start"])
 def start_command(message):
     user_id = message.from_user.id
@@ -274,7 +286,7 @@ def add_credits(message):
     except Exception:
         pass
 
-# ================= CHK COMMAND الأصلي (مع تعديل بسيط للديكور) =================
+# ================= CHK COMMAND =================
 @bot.message_handler(commands=['chk'])
 @subscription_required
 def check_card(message):
@@ -324,7 +336,6 @@ def check_card(message):
 
         send_response = send(cc, last, username, time_taken, remaining)
 
-        # ✅ CHARGED ONLY LOG (fixed)
         log_charged_only(message, last, send_response)
 
         bot.edit_message_text(
@@ -343,7 +354,7 @@ def check_card(message):
             )
         print("CHK ERROR:", e)
 
-# ================= CHARGED ONLY LOGGER (بدون تغيير) =================
+# ================= CHARGED ONLY LOGGER =================
 def log_charged_only(message, result_text, full_message):
     try:
         t = (result_text or "").lower()
