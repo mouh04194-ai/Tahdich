@@ -8,7 +8,7 @@ from gatet import Tele
 from hit_sender import send
 
 # ================= ADMIN الأساسي =================
-MASTER_ADMIN_IDS = [6891530912]  # @mouhamed_ma (لا يمكن إزالته)
+MASTER_ADMIN_IDS = [6891530912]  # @mouhamed_ma
 
 # ================= TOKEN =================
 with open('token.txt', 'r') as f:
@@ -55,7 +55,6 @@ def save_extra_admins(admins):
         json.dump(admins, f, indent=2)
 
 def is_admin(user_id):
-    """التحقق مما إذا كان المستخدم أدمن (أساسي أو إضافي)"""
     return user_id in MASTER_ADMIN_IDS or user_id in load_extra_admins()
 
 # ================= SETTINGS FILE =================
@@ -263,7 +262,7 @@ def send_my_stats(chat_id, user_id, edit_msg_id=None):
     else:
         bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
 
-# ================= لوحة تحكم المالك (المطورة) =================
+# ================= لوحة تحكم المالك =================
 def send_admin_panel(chat_id, user_id, edit_msg_id=None):
     if not is_admin(user_id):
         return
@@ -336,7 +335,7 @@ def process_add_admin(message, chat_id, original_msg_id):
         bot.send_message(chat_id, "❌ Invalid ID.")
     send_admin_panel(chat_id, message.from_user.id, original_msg_id)
 
-# ================= إرسال نقاط (بدلاً من /addcredits) =================
+# ================= إرسال نقاط =================
 def send_credits_prompt(chat_id, user_id, original_msg_id):
     msg = bot.send_message(chat_id, "✏️ Send the user ID and amount separated by space:\nExample: `123456789 50`", parse_mode="Markdown")
     bot.register_next_step_handler(msg, process_send_credits, chat_id, original_msg_id)
@@ -364,7 +363,6 @@ def process_send_credits(message, chat_id, original_msg_id):
 
 # ================= إدارة الحظر =================
 def blocked_list(call):
-    user_id = call.from_user.id
     settings = load_settings()
     blocked = settings.get("blocked_users", [])
     keyboard = InlineKeyboardMarkup(row_width=1)
@@ -389,7 +387,6 @@ def unblock_callback(call: CallbackQuery):
         bot.answer_callback_query(call.id, f"User {target} unblocked.", show_alert=True)
     else:
         bot.answer_callback_query(call.id, "Not blocked.", show_alert=True)
-    # تحديث القائمة
     blocked_list(call)
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_block")
@@ -433,7 +430,7 @@ def admin_callback(call: CallbackQuery):
         bot.answer_callback_query(call.id, f"Bot {'ACTIVE' if settings['bot_active'] else 'INACTIVE'}.", show_alert=True)
         send_admin_panel(call.message.chat.id, user_id, call.message.message_id)
     elif action == "set":
-        key = data[2]  # cost, reward, bonus
+        key = data[2]
         bot.answer_callback_query(call.id, f"Send new value for {key}:", show_alert=False)
         msg = bot.send_message(call.message.chat.id, f"✏️ Send new <b>{key}</b> (integer):", parse_mode="HTML")
         bot.register_next_step_handler(msg, process_admin_setting, key, call.message.chat.id, call.message.message_id)
@@ -535,10 +532,13 @@ def copy_invite_link(call: CallbackQuery):
 def process_cc_input(message, user_id):
     if message.from_user.id != user_id:
         return
+    # هنا فقط نتحقق إذا كان المستخدم يريد فحص بطاقة، لا نستدعي check_card مباشرة لأنها ستخصم رصيد
+    # لكننا سنحول الرسالة إلى أمر chk
     message.text = f"/chk {message.text.strip()}"
+    # نستدعي المعالج المخصص لـ /chk
     check_card(message)
 
-# ================= الأوامر النصية =================
+# ================= الأوامر النصية (تم تعديلها لمنع التداخل) =================
 @bot.message_handler(commands=["start"])
 def start_command(message):
     user_id = message.from_user.id
@@ -556,17 +556,18 @@ def start_command(message):
     else:
         send_main_menu(chat_id, user_id)
 
-@bot.message_handler(commands=["invite", "mystats", "info"])
+@bot.message_handler(commands=["invite"])
 @subscription_required
-def generic_commands(message):
-    cmd = message.text.split()[0][1:]
-    if cmd == "invite":
-        send_invite_menu(message.chat.id, message.from_user.id)
-    else:
-        send_my_stats(message.chat.id, message.from_user.id)
+def invite_cmd(message):
+    send_invite_menu(message.chat.id, message.from_user.id)
+
+@bot.message_handler(commands=["mystats", "info"])
+@subscription_required
+def stats_cmd(message):
+    send_my_stats(message.chat.id, message.from_user.id)
 
 @bot.message_handler(commands=["request"])
-@subscription_required
+@subscription_200
 def request_cmd(message):
     user_id = message.from_user.id
     username = bot.get_chat(user_id).username or "NoUsername"
@@ -574,7 +575,7 @@ def request_cmd(message):
     for admin_id in MASTER_ADMIN_IDS + load_extra_admins():
         bot.send_message(admin_id, f"📩 <b>طلب رصيد جديد</b>\n\nالمستخدم: @{username}\nالرقم: <code>{user_id}</code>", parse_mode="HTML")
 
-# ================= أمر CHK =================
+# ================= أمر CHK (الأساسي) =================
 @bot.message_handler(commands=['chk'])
 @subscription_required
 def check_card(message):
@@ -583,16 +584,23 @@ def check_card(message):
         remaining = spend_credit_or_block(message)
         if remaining is None:
             return
-        cc = message.text.split('/chk', 1)[1].strip() if len(message.text.split('/chk', 1)) > 1 else ""
-        if not cc:
+        # استخراج البطاقة من النص
+        parts = message.text.split(maxsplit=1)
+        if len(parts) < 2:
+            bot.reply_to(message, "❌ التنسيق غير صحيح. استخدم: /chk cc|mm|yy|cvv")
+            return
+        cc = parts[1].strip()
+        if not cc or '|' not in cc:
             bot.reply_to(message, "❌ التنسيق غير صحيح. استخدم: cc|mm|yy|cvv")
             return
+        username = message.from_user.username or "NoUsername"
         msg = bot.reply_to(message, "🔄 جاري فحص البطاقة...")
         msg_id = msg.message_id
         start_time = time.time()
         try:
             last = str(Tele(cc))
-        except:
+        except Exception as e:
+            print("Tele error:", e)
             last = 'API Error'
         # تحويل النتائج
         if "Donation Successful!" in last:
@@ -606,13 +614,15 @@ def check_card(message):
         else:
             last = 'Declined'
         time_taken = round(time.time() - start_time, 2)
-        send_response = send(cc, last, message.from_user.username or "NoUsername", time_taken, remaining)
+        send_response = send(cc, last, username, time_taken, remaining)
         log_charged_only(message, last, send_response)
         bot.edit_message_text(send_response, chat_id=message.chat.id, message_id=msg_id, parse_mode="HTML")
     except Exception as e:
-        if msg_id:
-            bot.edit_message_text("⚠️ حدث خطأ.", chat_id=message.chat.id, message_id=msg_id)
         print("CHK ERROR:", e)
+        if msg_id:
+            bot.edit_message_text("⚠️ حدث خطأ أثناء معالجة طلبك.", chat_id=message.chat.id, message_id=msg_id)
+        else:
+            bot.reply_to(message, "⚠️ حدث خطأ.")
 
 def log_charged_only(message, result_text, full_message):
     try:
@@ -625,4 +635,5 @@ def log_charged_only(message, result_text, full_message):
 
 # ================= بدء البوت =================
 if __name__ == "__main__":
+    print("Bot started...")
     bot.infinity_polling(timeout=25, long_polling_timeout=25)
