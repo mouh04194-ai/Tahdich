@@ -39,9 +39,39 @@ FORCE_SUB_MSG = (
     "✅ بعد إكمال الاشتراك اضغط على زر التحقق"
 )
 
-# ================= DB (مع إضافة نظام الدعوات) =================
+# ================= SETTINGS FILE (للمالك) =================
+SETTINGS_FILE = "settings.json"
+DEFAULT_SETTINGS = {
+    "check_cost": 5,          # عدد النقاط التي تخصم لكل فحص بطاقة
+    "referral_reward": 5,     # النقاط التي يحصل عليها الداعي عند دعوة شخص جديد
+    "referral_bonus": 10,     # النقاط الإضافية التي يحصل عليها المدعو الجديد (فوق الأساسية)
+    "bot_active": True,       # حالة تشغيل البوت (True = يعمل، False = مقفل)
+    "blocked_users": []       # قائمة معرفات المستخدمين المحظورين
+}
+
+def load_settings():
+    if not os.path.exists(SETTINGS_FILE):
+        save_settings(DEFAULT_SETTINGS)
+        return DEFAULT_SETTINGS.copy()
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return DEFAULT_SETTINGS.copy()
+
+def save_settings(settings):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(settings, f, indent=2)
+
+def is_bot_active():
+    return load_settings().get("bot_active", True)
+
+def is_user_blocked(user_id):
+    return str(user_id) in load_settings().get("blocked_users", [])
+
+# ================= DB (مع نظام الدعوات والإعدادات) =================
 CREDITS_FILE = "credits.json"
-DEFAULT_CREDITS = 10  # الهدية للمستخدم الجديد
+DEFAULT_CREDITS = 10  # الهدية الأساسية للمستخدم الجديد
 
 def load_db():
     if not os.path.exists(CREDITS_FILE):
@@ -57,39 +87,34 @@ def save_db(db):
         json.dump(db, f, indent=2)
 
 def ensure_user(user_id, referrer_id=None):
-    """
-    تضمن وجود المستخدم في قاعدة البيانات.
-    إذا كان المستخدم جديداً ووُجد مرجع (referrer) نضيف نقاطاً للمرجع وللمستخدم الجديد.
-    """
     db = load_db()
     uid = str(user_id)
     if uid not in db:
-        # مستخدم جديد
+        settings = load_settings()
+        reward = settings.get("referral_reward", 5)
+        bonus = settings.get("referral_bonus", 10)
         db[uid] = {
             "credits": DEFAULT_CREDITS,
             "invited_by": None,
             "invite_count": 0
         }
-        # معالجة الدعوة إذا وجدت
         if referrer_id and str(referrer_id) != uid:
             referrer = str(referrer_id)
             if referrer in db:
-                # إضافة 5 نقاط للداعي
-                db[referrer]["credits"] = db[referrer].get("credits", 0) + 5
+                # إضافة مكافأة للداعي حسب الإعدادات
+                db[referrer]["credits"] = db[referrer].get("credits", 0) + reward
                 db[referrer]["invite_count"] = db[referrer].get("invite_count", 0) + 1
-                # إضافة 10 نقاط إضافية للمدعو الجديد (فوق العشرة الأساسية)
-                db[uid]["credits"] += 10
+                # إضافة مكافأة للمدعو الجديد
+                db[uid]["credits"] += bonus
                 db[uid]["invited_by"] = referrer
-                # إعلام الداعي
                 try:
-                    bot.send_message(int(referrer), f"🎉 <b>New Referral!</b>\n\n+5 Credits\nTotal Referrals: {db[referrer]['invite_count']}", parse_mode="HTML")
+                    bot.send_message(int(referrer), f"🎉 <b>New Referral!</b>\n\n+{reward} Credits\nTotal Referrals: {db[referrer]['invite_count']}", parse_mode="HTML")
                 except:
                     pass
         save_db(db)
     return db
 
-def add_credits(user_id, amount, reason=""):
-    """إضافة رصيد لأي مستخدم مع تسجيل السبب (اختياري)"""
+def add_credits_to_user(user_id, amount):
     db = load_db()
     uid = str(user_id)
     if uid not in db:
@@ -98,14 +123,18 @@ def add_credits(user_id, amount, reason=""):
     save_db(db)
     return db[uid]["credits"]
 
-def spend_credit_or_block(message, cost=1):
-    db = ensure_user(message.from_user.id)
-    uid = str(message.from_user.id)
-
-    if db[uid]["credits"] < cost:
-        bot.reply_to(message, "❌ No credits left. Use /invite to earn more via referrals.")
+def spend_credit_or_block(message, cost=None):
+    user_id = message.from_user.id
+    if is_user_blocked(user_id):
+        bot.reply_to(message, "🚫 You are blocked from using this bot.")
         return None
-
+    if cost is None:
+        cost = load_settings().get("check_cost", 5)
+    db = ensure_user(user_id)
+    uid = str(user_id)
+    if db[uid]["credits"] < cost:
+        bot.reply_to(message, f"❌ رصيدك غير كافٍ. تحتاج {cost} نقطة.\n💡 احصل على نقاط عبر /invite.")
+        return None
     db[uid]["credits"] -= cost
     save_db(db)
     return db[uid]["credits"]
@@ -121,10 +150,6 @@ def is_subscribed(user_id):
             return False
     sub1 = check_channel(FORCE_CHANNEL_1)
     sub2 = check_channel(FORCE_CHANNEL_2)
-    if not sub1:
-        print(f"User {user_id} not subscribed to channel 1")
-    if not sub2:
-        print(f"User {user_id} not subscribed to channel 2")
     return sub1 and sub2
 
 def send_force_sub_message(chat_id, user_id):
@@ -140,6 +165,12 @@ def send_force_sub_message(chat_id, user_id):
 def subscription_required(func):
     def wrapper(message):
         user_id = message.from_user.id
+        if is_user_blocked(user_id):
+            bot.reply_to(message, "🚫 You are blocked.")
+            return
+        if not is_bot_active() and user_id not in ADMIN_IDS:
+            bot.reply_to(message, "🔴 البوت في وضع الصيانة حالياً. يرجى المحاولة لاحقاً.")
+            return
         if not is_subscribed(user_id):
             send_force_sub_message(message.chat.id, user_id)
             return
@@ -165,7 +196,7 @@ def check_sub_callback(call: CallbackQuery):
         bot.answer_callback_query(call.id, "❌ لم يتم الاشتراك بعد، تأكد من الاشتراك في القناتين ثم اضغط تحقق.", show_alert=True)
         send_force_sub_message(call.message.chat.id, user_id)
 
-# ================= القائمة الرئيسية الجديدة (أزرار احترافية) =================
+# ================= القائمة الرئيسية (مع زر للمالك) =================
 def send_main_menu(chat_id, user_id):
     db = ensure_user(user_id)
     credits = db[str(user_id)]["credits"]
@@ -180,9 +211,14 @@ def send_main_menu(chat_id, user_id):
     btn_chk = InlineKeyboardButton("🛡️ Check Card", callback_data="cmd_chk")
     btn_invite = InlineKeyboardButton("🎁 Invite & Earn", callback_data="cmd_invite")
     btn_stats = InlineKeyboardButton("👤 My Stats", callback_data="cmd_stats")
-    btn_support = InlineKeyboardButton("📞 Support", url="https://t.me/mouhamed_ma")  # غير الرابط
+    btn_support = InlineKeyboardButton("📞 Support", url="https://t.me/mouhamed_ma")
     keyboard.add(btn_chk, btn_invite)
     keyboard.add(btn_stats, btn_support)
+    
+    # إضافة زر لوحة التحكم للمالكين فقط
+    if user_id in ADMIN_IDS:
+        btn_admin = InlineKeyboardButton("⚙️ Admin Panel", callback_data="admin_panel")
+        keyboard.add(btn_admin)
 
     text = (
         f"✨ <b>Welcome back, @{username}!</b> ✨\n\n"
@@ -192,12 +228,16 @@ def send_main_menu(chat_id, user_id):
     )
     bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
 
-# ================= قائمة الدعوات (Invite Menu) =================
+# ================= قائمة الدعوات =================
 def send_invite_menu(chat_id, user_id, edit_msg_id=None):
     db = ensure_user(user_id)
     invite_count = db[str(user_id)].get("invite_count", 0)
     bot_username = bot.get_me().username
     invite_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    
+    settings = load_settings()
+    reward = settings.get("referral_reward", 5)
+    bonus = settings.get("referral_bonus", 10)
     
     keyboard = InlineKeyboardMarkup(row_width=1)
     btn_link = InlineKeyboardButton("🔗 Copy Invite Link", callback_data="copy_link")
@@ -209,8 +249,8 @@ def send_invite_menu(chat_id, user_id, edit_msg_id=None):
         "➡️ <b>Your Invite Link:</b>\n"
         f"<code>{invite_link}</code>\n\n"
         "📌 <b>How it works?</b>\n"
-        "• Each friend who joins using your link gives you <b>+5 Credits</b>.\n"
-        "• Your friend gets <b>+10 Bonus Credits</b> on signup.\n\n"
+        f"• Each friend who joins using your link gives you <b>+{reward} Credits</b>.\n"
+        f"• Your friend gets <b>+{bonus} Bonus Credits</b> on signup.\n\n"
         f"👥 <b>Total Referrals:</b> <code>{invite_count}</code>\n\n"
         "🔗 <i>Share your link and earn unlimited credits!</i>"
     )
@@ -219,7 +259,7 @@ def send_invite_menu(chat_id, user_id, edit_msg_id=None):
     else:
         bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
 
-# ================= عرض الإحصائيات (My Stats) =================
+# ================= عرض الإحصائيات =================
 def send_my_stats(chat_id, user_id, edit_msg_id=None):
     db = ensure_user(user_id)
     credits = db[str(user_id)]["credits"]
@@ -251,12 +291,130 @@ def send_my_stats(chat_id, user_id, edit_msg_id=None):
     else:
         bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
 
+# ================= لوحة تحكم المالك =================
+def send_admin_panel(chat_id, user_id, edit_msg_id=None):
+    if user_id not in ADMIN_IDS:
+        return
+    settings = load_settings()
+    bot_active = settings.get("bot_active", True)
+    check_cost = settings.get("check_cost", 5)
+    referral_reward = settings.get("referral_reward", 5)
+    referral_bonus = settings.get("referral_bonus", 10)
+    blocked_count = len(settings.get("blocked_users", []))
+    
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    btn_toggle = InlineKeyboardButton("🔓 Activate" if not bot_active else "🔒 Deactivate", callback_data="admin_toggle")
+    btn_set_cost = InlineKeyboardButton(f"💰 Check Cost: {check_cost}", callback_data="admin_set_cost")
+    btn_set_reward = InlineKeyboardButton(f"🎁 Referral Reward: {referral_reward}", callback_data="admin_set_reward")
+    btn_set_bonus = InlineKeyboardButton(f"✨ Referral Bonus: {referral_bonus}", callback_data="admin_set_bonus")
+    btn_blocked = InlineKeyboardButton(f"🚫 Blocked Users: {blocked_count}", callback_data="admin_blocked_list")
+    btn_back = InlineKeyboardButton("◀️ Back to Main Menu", callback_data="main_menu")
+    keyboard.add(btn_toggle, btn_set_cost)
+    keyboard.add(btn_set_reward, btn_set_bonus)
+    keyboard.add(btn_blocked, btn_back)
+    
+    text = (
+        "⚙️ <b>Admin Control Panel</b>\n\n"
+        f"📌 Bot Status: {'🟢 Active' if bot_active else '🔴 Inactive'}\n"
+        f"💳 Check Cost: <code>{check_cost}</code> credits\n"
+        f"👥 Referral Reward: <code>{referral_reward}</code> credits\n"
+        f"🎁 Referral Bonus: <code>{referral_bonus}</code> credits\n"
+        f"🚫 Blocked Users: <code>{blocked_count}</code>\n\n"
+        "Click any button to modify."
+    )
+    if edit_msg_id:
+        bot.edit_message_text(text, chat_id, edit_msg_id, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
+
+# ================= معالجة أزرار المالك =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
+def admin_callback(call: CallbackQuery):
+    user_id = call.from_user.id
+    if user_id not in ADMIN_IDS:
+        bot.answer_callback_query(call.id, "🚫 You are not an admin.", show_alert=True)
+        return
+    action = call.data.split("_")[1]
+    settings = load_settings()
+    
+    if action == "toggle":
+        settings["bot_active"] = not settings.get("bot_active", True)
+        save_settings(settings)
+        bot.answer_callback_query(call.id, f"✅ Bot is now {'ACTIVE' if settings['bot_active'] else 'INACTIVE'}.", show_alert=True)
+        send_admin_panel(call.message.chat.id, user_id, call.message.message_id)
+    elif action == "set":
+        sub = call.data.split("_")[2]  # cost, reward, bonus
+        bot.answer_callback_query(call.id, f"Send new value for {sub} as a number.", show_alert=False)
+        # سنستخدم next_step_handler لتلقي القيمة
+        msg = bot.send_message(call.message.chat.id, f"✏️ Please send the new value for <b>{sub}</b>:\n(integer number)", parse_mode="HTML")
+        bot.register_next_step_handler(msg, process_admin_setting, sub, call.message.chat.id, call.message.message_id)
+    elif action == "blocked":
+        # عرض قائمة المحظورين مع خيارات إضافة/إزالة
+        blocked = settings.get("blocked_users", [])
+        if not blocked:
+            bot.answer_callback_query(call.id, "📭 No blocked users.", show_alert=True)
+            return
+        keyboard = InlineKeyboardMarkup()
+        for uid in blocked:
+            btn = InlineKeyboardButton(f"Unblock {uid}", callback_data=f"admin_unblock_{uid}")
+            keyboard.add(btn)
+        btn_back = InlineKeyboardButton("◀️ Back", callback_data="admin_panel")
+        keyboard.add(btn_back)
+        text = "🚫 <b>Blocked Users</b>\n\nClick on a user to unblock:"
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=keyboard, parse_mode="HTML")
+        bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_unblock_"))
+def admin_unblock_callback(call: CallbackQuery):
+    user_id = call.from_user.id
+    if user_id not in ADMIN_IDS:
+        bot.answer_callback_query(call.id, "🚫 Not admin.", show_alert=True)
+        return
+    target = call.data.split("_")[2]
+    settings = load_settings()
+    if target in settings.get("blocked_users", []):
+        settings["blocked_users"].remove(target)
+        save_settings(settings)
+        bot.answer_callback_query(call.id, f"✅ User {target} unblocked.", show_alert=True)
+    else:
+        bot.answer_callback_query(call.id, "User not found in block list.", show_alert=True)
+    # العودة إلى لوحة التحكم
+    send_admin_panel(call.message.chat.id, user_id, call.message.message_id)
+
+def process_admin_setting(message, setting_key, chat_id, original_msg_id):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    try:
+        new_value = int(message.text.strip())
+        if new_value < 0:
+            raise ValueError
+        settings = load_settings()
+        if setting_key == "cost":
+            settings["check_cost"] = new_value
+        elif setting_key == "reward":
+            settings["referral_reward"] = new_value
+        elif setting_key == "bonus":
+            settings["referral_bonus"] = new_value
+        else:
+            return
+        save_settings(settings)
+        bot.send_message(chat_id, f"✅ {setting_key} updated to {new_value}.")
+    except:
+        bot.send_message(chat_id, "❌ Invalid number. Operation cancelled.")
+    send_admin_panel(chat_id, message.from_user.id, original_msg_id)
+
 # ================= معالجة أزرار القائمة الرئيسية =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cmd_"))
 def menu_callback(call: CallbackQuery):
     user_id = call.from_user.id
     chat_id = call.message.chat.id
     
+    if is_user_blocked(user_id):
+        bot.answer_callback_query(call.id, "🚫 You are blocked.", show_alert=True)
+        return
+    if not is_bot_active() and user_id not in ADMIN_IDS:
+        bot.answer_callback_query(call.id, "🔴 Bot is under maintenance.", show_alert=True)
+        return
     if not is_subscribed(user_id):
         bot.answer_callback_query(call.id, "❌ يرجى الاشتراك في القناتين أولاً", show_alert=True)
         send_force_sub_message(chat_id, user_id)
@@ -284,8 +442,16 @@ def menu_callback(call: CallbackQuery):
         send_my_stats(chat_id, user_id, call.message.message_id)
         bot.answer_callback_query(call.id)
     elif cmd == "support":
-        # يمكن تخصيص رابط الدعم
         bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "admin_panel")
+def admin_panel_callback(call: CallbackQuery):
+    user_id = call.from_user.id
+    if user_id not in ADMIN_IDS:
+        bot.answer_callback_query(call.id, "🚫 Not admin.", show_alert=True)
+        return
+    send_admin_panel(call.message.chat.id, user_id, call.message.message_id)
+    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "main_menu")
 def back_to_main(call: CallbackQuery):
@@ -302,7 +468,7 @@ def copy_invite_link(call: CallbackQuery):
     bot_username = bot.get_me().username
     user_id = call.from_user.id
     link = f"https://t.me/{bot_username}?start=ref_{user_id}"
-    bot.answer_callback_query(call.id, f"🔗 Link copied: {link}", show_alert=True)
+    bot.answer_callback_query(call.id, f"🔗 الرابط: {link}\n\nيمكنك نسخه الآن.", show_alert=True)
 
 def process_cc_input(message, user_id):
     if message.from_user.id != user_id:
@@ -310,21 +476,20 @@ def process_cc_input(message, user_id):
     message.text = f"/chk {message.text.strip()}"
     check_card(message)
 
-# ================= الأوامر الأصلية والمعدلة =================
+# ================= الأوامر النصية =================
 @bot.message_handler(commands=["start"])
 def start_command(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
+    if is_user_blocked(user_id):
+        bot.reply_to(message, "🚫 You are blocked.")
+        return
     referrer_id = None
-    
-    # التحقق من وجود معرف الدعوة في الأمر /start ref_123456
     text = message.text.strip()
     match = re.search(r'ref_(\d+)', text)
     if match:
         referrer_id = int(match.group(1))
-    
     ensure_user(user_id, referrer_id)
-    
     if not is_subscribed(user_id):
         send_force_sub_message(chat_id, user_id)
     else:
@@ -343,49 +508,47 @@ def stats_cmd(message):
 @bot.message_handler(commands=["request"])
 @subscription_required
 def request_cmd(message):
-    request_credits_logic(message.chat.id, message.from_user.id)
+    user_id = message.from_user.id
+    try:
+        username = bot.get_chat(user_id).username or "NoUsername"
+    except:
+        username = "NoUsername"
+    bot.reply_to(message, "✅ تم إرسال طلبك إلى المدير. يمكنك أيضاً كسب نقاط عبر /invite.")
+    for admin_id in ADMIN_IDS:
+        bot.send_message(
+            admin_id,
+            f"📩 <b>طلب رصيد جديد</b>\n\nالمستخدم: @{username}\nالرقم: <code>{user_id}</code>",
+            parse_mode="HTML"
+        )
 
 @bot.message_handler(commands=["addcredits"])
-def add_credits(message):
+def add_credits_admin(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "❌ You are not admin.")
         return
     args = message.text.split()
     if len(args) != 3:
-        bot.reply_to(message, "Usage:\n/addcredits user_id amount")
+        bot.reply_to(message, "Usage:\n/addcredits <user_id> <amount>")
         return
     target_id = args[1]
     try:
         amount = int(args[2])
-    except Exception:
+    except:
         bot.reply_to(message, "Amount must be a number.")
         return
     if amount <= 0:
         bot.reply_to(message, "Amount must be > 0.")
         return
-    new_balance = add_credits(target_id, amount)
-    bot.reply_to(message, f"✅ Credits Added\nUser ID: {target_id}\nAdded: {amount}\nRemaining: {new_balance}")
+    new_balance = add_credits_to_user(target_id, amount)
+    bot.reply_to(message, f"✅ Credits Added\nUser ID: {target_id}\nAdded: {amount}\nNew Balance: {new_balance}")
     try:
         bot.send_message(
             int(target_id),
             f"🎉 <b>Credits Added!</b>\n+{amount}\nBalance: <b>{new_balance}</b>",
             parse_mode="HTML"
         )
-    except Exception:
-        pass
-
-def request_credits_logic(chat_id, user_id):
-    try:
-        username = bot.get_chat(user_id).username or "NoUsername"
     except:
-        username = "NoUsername"
-    bot.send_message(chat_id, "✅ Request sent to admin. You can also earn credits via /invite.")
-    for admin_id in ADMIN_IDS:
-        bot.send_message(
-            admin_id,
-            f"📩 <b>Credit Request</b>\n\nUser: @{username}\nID: <code>{user_id}</code>",
-            parse_mode="HTML"
-        )
+        pass
 
 # ================= CHK COMMAND =================
 @bot.message_handler(commands=['chk'])
@@ -393,8 +556,7 @@ def request_credits_logic(chat_id, user_id):
 def check_card(message):
     msg_id = None
     try:
-        # 🔧 تغيير cost من 1 إلى 5
-        remaining = spend_credit_or_block(message, cost=5)
+        remaining = spend_credit_or_block(message)  # يستخدم السعر من الإعدادات
         if remaining is None:
             return
 
