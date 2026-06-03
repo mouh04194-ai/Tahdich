@@ -265,7 +265,16 @@ def menu_callback(call: CallbackQuery):
     cmd = call.data.split("_")[1]
     
     if cmd == "chk":
-        msg = bot.send_message(chat_id, "📝 أرسل البطاقة بهذا التنسيق:\n<code>cc|mm|yy|cvv</code>\nمثال: <code>4242424242424242|12|26|123</code>", parse_mode="HTML")
+        msg = bot.send_message(
+            chat_id,
+            "<blockquote>💳 <b>إرسال بيانات البطاقة</b>\n\n"
+            "📌 يرجى إرسال البطاقة بالتنسيق التالي:\n"
+            "<code>رقم البطاقة|الشهر|السنة|رمز الأمان</code>\n\n"
+            "📝 مثال:\n"
+            "<code>XXXXXXXXXXXXXXXX|12|26|123</code>\n\n"
+            "⚠️ لا تشارك هذه البيانات مع أي شخص آخر.</blockquote>",
+            parse_mode="HTML"
+        )
         bot.register_next_step_handler(msg, process_cc_input, user_id)
         bot.answer_callback_query(call.id)
     elif cmd == "invite":
