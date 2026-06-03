@@ -393,7 +393,8 @@ def request_credits_logic(chat_id, user_id):
 def check_card(message):
     msg_id = None
     try:
-        remaining = spend_credit_or_block(message, cost=1)
+        # 🔧 تغيير cost من 1 إلى 5
+        remaining = spend_credit_or_block(message, cost=5)
         if remaining is None:
             return
 
@@ -403,7 +404,7 @@ def check_card(message):
 
         username = message.from_user.username or "NoUsername"
 
-        msg = bot.reply_to(message, "Checking your card...")
+        msg = bot.reply_to(message, "🔄 جاري فحص البطاقة...")
         msg_id = msg.message_id
         start_time = time.time()
 
@@ -411,7 +412,7 @@ def check_card(message):
             bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=msg_id,
-                text="Invalid format. Use: cc|mm|yy|cvv",
+                text="❌ التنسيق غير صحيح. استخدم: cc|mm|yy|cvv",
                 parse_mode="HTML"
             )
             return
@@ -450,7 +451,7 @@ def check_card(message):
             bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=msg_id,
-                text="An error occurred while processing your request."
+                text="⚠️ حدث خطأ أثناء معالجة طلبك."
             )
         print("CHK ERROR:", e)
 
