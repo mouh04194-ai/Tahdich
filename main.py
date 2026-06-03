@@ -532,13 +532,11 @@ def copy_invite_link(call: CallbackQuery):
 def process_cc_input(message, user_id):
     if message.from_user.id != user_id:
         return
-    # هنا فقط نتحقق إذا كان المستخدم يريد فحص بطاقة، لا نستدعي check_card مباشرة لأنها ستخصم رصيد
-    # لكننا سنحول الرسالة إلى أمر chk
+    # تحويل الرسالة إلى أمر /chk
     message.text = f"/chk {message.text.strip()}"
-    # نستدعي المعالج المخصص لـ /chk
     check_card(message)
 
-# ================= الأوامر النصية (تم تعديلها لمنع التداخل) =================
+# ================= الأوامر النصية =================
 @bot.message_handler(commands=["start"])
 def start_command(message):
     user_id = message.from_user.id
@@ -567,7 +565,7 @@ def stats_cmd(message):
     send_my_stats(message.chat.id, message.from_user.id)
 
 @bot.message_handler(commands=["request"])
-@subscription_200
+@subscription_required
 def request_cmd(message):
     user_id = message.from_user.id
     username = bot.get_chat(user_id).username or "NoUsername"
@@ -575,7 +573,7 @@ def request_cmd(message):
     for admin_id in MASTER_ADMIN_IDS + load_extra_admins():
         bot.send_message(admin_id, f"📩 <b>طلب رصيد جديد</b>\n\nالمستخدم: @{username}\nالرقم: <code>{user_id}</code>", parse_mode="HTML")
 
-# ================= أمر CHK (الأساسي) =================
+# ================= أمر CHK =================
 @bot.message_handler(commands=['chk'])
 @subscription_required
 def check_card(message):
@@ -584,7 +582,6 @@ def check_card(message):
         remaining = spend_credit_or_block(message)
         if remaining is None:
             return
-        # استخراج البطاقة من النص
         parts = message.text.split(maxsplit=1)
         if len(parts) < 2:
             bot.reply_to(message, "❌ التنسيق غير صحيح. استخدم: /chk cc|mm|yy|cvv")
@@ -602,7 +599,6 @@ def check_card(message):
         except Exception as e:
             print("Tele error:", e)
             last = 'API Error'
-        # تحويل النتائج
         if "Donation Successful!" in last:
             last = '𝐂𝐡𝐚𝐫𝐠𝐞𝐝 🔥'
         elif "Your card does not support this type of purchase" in last:
